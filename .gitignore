@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.heapsnapshot
+*.js
+*.js.map
+*.d.ts
+*.d.ts.map
+!vitest.config.ts
