@@ -119,15 +119,15 @@ npm run demo      # End-to-end leak detection demo
    Duration  567ms
 
  cdp-client.test.ts              11 tests  — WebSocket connect, CDP send/receive, events, disconnect
- cpu-profile-analyzer.test.ts    14 tests  — Hot functions, GC pressure, categories, edge cases
- edge-parser.test.ts             10 tests  — Edge resolution, type mapping, boundary conditions
- heap-snapshot-parser.test.ts    12 tests  — Full/summary parse, file guards, error handling
+ cpu-profile-analyzer.test.ts    20 tests  — Hot functions, GC pressure, categories, edge cases
+ edge-parser.test.ts             11 tests  — Edge resolution, type mapping, boundary conditions
+ heap-snapshot-parser.test.ts    13 tests  — Full/summary parse, file guards, error handling
  integration-pipeline.test.ts     3 tests  — End-to-end parse → diff → chains → Perfetto
- llm-analysis-bridge.test.ts     20 tests  — Heap/leak/CPU analysis + merge results
+ llm-analysis-bridge.test.ts     22 tests  — Heap/leak/CPU analysis + merge results
  node-parser.test.ts             16 tests  — Flat array decoding, type resolution, detachedness
- noise-filter.test.ts            28 tests  — All 5 filter layers, combinations, edge cases
- perfetto-formatter.test.ts      12 tests  — Trace events, retainer chains, leak markers
- retainer-chain-extractor.test.ts 22 tests — BFS, cycles, partial chains, multi-constructor
+ noise-filter.test.ts            13 tests  — All 5 filter layers, combinations, edge cases
+ perfetto-formatter.test.ts      20 tests  — Trace events, retainer chains, leak markers
+ retainer-chain-extractor.test.ts 19 tests — BFS, cycles, partial chains, multi-constructor
  three-snapshot-diff.test.ts     16 tests  — Diff algorithm, sorting, LLM output
  tool-definitions.test.ts        21 tests  — Schema validation, cross-tool consistency
 ```
