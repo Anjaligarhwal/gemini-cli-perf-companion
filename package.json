@@ -5,7 +5,7 @@
   "scripts": {
     "test": "vitest run",
     "build": "tsc",
-    "demo": "node --loader ts-node/esm src/demo.ts"
+    "demo": "npx tsx src/demo.ts"
   },
   "keywords": [],
   "author": "",

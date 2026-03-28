@@ -106,10 +106,15 @@ maybeRegister(HeapSnapshotCaptureTool, () =>
 
 ```bash
 npm install
-npm test          # 185 tests
-npm run build     # TypeScript compilation
-npm run demo      # End-to-end leak detection demo
+npx vitest run          # Run all 185 tests
+npm run build           # TypeScript compilation
+npx tsx src/demo.ts     # End-to-end leak detection demo
 ```
+
+The demo simulates a server-side memory leak (unbounded `SessionStore`), captures 3 heap snapshots, runs the diff + retainer chain pipeline, and generates a Perfetto trace. Output includes:
+- **Top leaking constructor**: `RequestContext` (detected by named constructor growth)
+- **Retainer chain**: `RequestContext ← Map ← sessions ← SessionStore ← module scope`
+- **Perfetto trace**: Open the generated `demo-trace.json` at [ui.perfetto.dev](https://ui.perfetto.dev/)
 
 ## Test Coverage
 
@@ -132,9 +137,10 @@ npm run demo      # End-to-end leak detection demo
  tool-definitions.test.ts        21 tests  — Schema validation, cross-tool consistency
 ```
 
-## Related
+## Upstream Contributions
 
-- **PR [#23536](https://github.com/google-gemini/gemini-cli/pull/23536)** — Test coverage for `HighWaterMarkTracker` in gemini-cli's telemetry subsystem
+- **PR [#23587](https://github.com/google-gemini/gemini-cli/pull/23587)** — Bug fix: `ProceedAlwaysAndSave` incorrectly mapped to `REJECT` instead of `AUTO_ACCEPT` in telemetry, plus 8 unit tests for `getDecisionFromOutcome` *(status/need-issue)*
+- **PR [#23536](https://github.com/google-gemini/gemini-cli/pull/23536)** — 13 edge-case tests for `HighWaterMarkTracker` in gemini-cli's telemetry subsystem
 - **Issue [#23365](https://github.com/google-gemini/gemini-cli/issues/23365)** — GSoC project: Terminal-Integrated Performance & Memory Investigation Companion
 
 ## Technology
