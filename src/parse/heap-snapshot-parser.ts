@@ -71,15 +71,21 @@ export interface ParseOptions {
   topN?: number;
   /** Maximum file size in bytes before rejecting. @defaultValue 536_870_912 (512 MB) */
   maxFileSizeBytes?: number;
-  /** RSS threshold (bytes) at which a warning is emitted. @defaultValue 268_435_456 (256 MB) */
+  /** RSS threshold (bytes) at which a warning is emitted. @defaultValue 536_870_912 (512 MB) */
   memoryPressureThreshold?: number;
 }
 
 /** Default maximum file size: 512 MB. */
 const DEFAULT_MAX_FILE_SIZE_BYTES = 536_870_912;
 
-/** Default RSS warning threshold: 256 MB. */
-const DEFAULT_MEMORY_PRESSURE_THRESHOLD = 268_435_456;
+/**
+ * Default RSS warning threshold: 512 MB.
+ *
+ * Set to match the file size guard.  During self-profiling, the process
+ * RSS naturally includes the parser itself plus the parsed snapshot data,
+ * so a lower threshold would emit false positives on every self-capture.
+ */
+const DEFAULT_MEMORY_PRESSURE_THRESHOLD = 536_870_912;
 
 /** Default number of top constructors in the summary. */
 const DEFAULT_TOP_N = 20;
