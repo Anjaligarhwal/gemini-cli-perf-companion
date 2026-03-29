@@ -101,10 +101,15 @@ async function captureSelf(
       chunks.push((message as { params: { chunk: string } }).params.chunk);
     });
 
-    await Promise.race([
-      session.post('HeapProfiler.takeHeapSnapshot', { reportProgress: false }),
-      rejectAfterTimeout(timeoutMs),
-    ]);
+    const { promise: timeoutPromise, cancel: cancelTimeout } = createTimeout(timeoutMs);
+    try {
+      await Promise.race([
+        session.post('HeapProfiler.takeHeapSnapshot', { reportProgress: false }),
+        timeoutPromise,
+      ]);
+    } finally {
+      cancelTimeout();
+    }
 
     const content = chunks.join('');
     await writeFile(filePath, content, 'utf-8');
@@ -170,10 +175,15 @@ async function captureRemote(
     });
 
     // Take the snapshot with a timeout guard.
-    await Promise.race([
-      client.send('HeapProfiler.takeHeapSnapshot', { reportProgress: false }),
-      rejectAfterTimeout(timeoutMs),
-    ]);
+    const { promise: timeoutPromise, cancel: cancelTimeout } = createTimeout(timeoutMs);
+    try {
+      await Promise.race([
+        client.send('HeapProfiler.takeHeapSnapshot', { reportProgress: false }),
+        timeoutPromise,
+      ]);
+    } finally {
+      cancelTimeout();
+    }
 
     // Disable and disconnect.
     await client.send('HeapProfiler.disable');
@@ -248,10 +258,18 @@ export async function captureThreeSnapshots(
 
 // ─── Private Helpers ─────────────────────────────────────────────────
 
-/** Create a promise that rejects after the specified timeout. */
-function rejectAfterTimeout(ms: number): Promise<never> {
-  return new Promise<never>((_, reject) => {
-    setTimeout(
+/**
+ * Create a cancellable timeout that rejects after `ms` milliseconds.
+ *
+ * The caller MUST invoke `cancel()` when the guarded operation completes
+ * (success or failure) to prevent the timer from leaking.  This avoids
+ * keeping the Node.js event loop alive and suppresses unhandled rejection
+ * warnings.
+ */
+function createTimeout(ms: number): { promise: Promise<never>; cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<never>((_, reject) => {
+    timer = setTimeout(
       () => reject(new PerfCompanionError(
         `Snapshot capture timed out after ${ms}ms`,
         PerfErrorCode.CAPTURE_TIMEOUT,
@@ -260,6 +278,13 @@ function rejectAfterTimeout(ms: number): Promise<never> {
       ms,
     );
   });
+  const cancel = (): void => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+  return { promise, cancel };
 }
 
 /** Promise-based sleep. */
