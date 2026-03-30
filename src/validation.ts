@@ -1,6 +1,5 @@
 /**
  * @license
- * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,8 +15,14 @@ import type { AnalysisOptions, CaptureOptions } from './types.js';
 /** Maximum file path length to prevent path traversal and OS-level errors. */
 const MAX_PATH_LENGTH = 4096;
 
-/** Valid port range per IANA assignment. */
-const MIN_PORT = 1;
+/**
+ * Minimum port: 1024 (rejects privileged ports 1–1023).
+ *
+ * Aligns with the security module's `connection-validator.ts` which
+ * rejects privileged ports to prevent connecting to system services.
+ * Node.js inspector defaults to 9229.
+ */
+const MIN_PORT = 1024;
 const MAX_PORT = 65535;
 
 const VALID_ANALYSIS_MODES = new Set(['summary', 'diff', 'leak-detect', 'growth']);

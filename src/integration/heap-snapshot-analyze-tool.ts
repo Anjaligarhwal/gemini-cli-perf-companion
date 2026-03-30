@@ -1,61 +1,41 @@
 /**
  * @license
- * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
-// @ts-nocheck — This file targets gemini-cli's packages/core/src/tools/.
-// Imports resolve only when placed inside the gemini-cli monorepo.
 
 /**
  * BaseDeclarativeTool integration for heap snapshot analysis.
  *
- * This file follows the exact pattern from gemini-cli's ReadFileTool.
- * Placement: packages/core/src/tools/heap-snapshot-analyze.ts
+ * Target location: packages/core/src/tools/heap-snapshot-analyze.ts
  *
- * The tool reads .heapsnapshot files from disk, parses them using the
- * perf-companion engine, and returns structured analysis via ToolResult.
- * The LLM-optimized context feeds directly into the Gemini agent loop.
+ * Reads .heapsnapshot files from disk, parses them using the streaming
+ * parser, runs leak detection + retainer chain extraction, and returns
+ * structured analysis via ToolResult for the Gemini agent loop.
  */
 
-import type { MessageBus } from '../confirmation-bus/message-bus.js';
-import {
-  BaseDeclarativeTool,
-  BaseToolInvocation,
-  Kind,
-  type ToolInvocation,
-  type ToolLocation,
-  type ToolResult,
-} from './tools.js';
-import type { Config } from '../config/config.js';
+import type { MessageBus, Config, ToolLocation, ToolInvocation } from './gemini-cli-types.js';
+import { BaseDeclarativeTool, BaseToolInvocation, Kind, type ToolResult } from './gemini-cli-types.js';
 import {
   HEAP_SNAPSHOT_ANALYZE_TOOL_NAME,
   HEAP_SNAPSHOT_ANALYZE_DISPLAY_NAME,
   HEAP_SNAPSHOT_ANALYZE_DEFINITION,
-} from './definitions/coreTools.js';
-import {
-  parseHeapSnapshot,
-  parseHeapSnapshotFull,
-} from '../perf-companion/parse/heap-snapshot-parser.js';
-import { diffSnapshots } from '../perf-companion/analyze/three-snapshot-diff.js';
-import {
-  extractRetainerChainsForLeaks,
-} from '../perf-companion/analyze/retainer-chain-extractor.js';
-import {
-  analyzeHeapSummary,
-  analyzeLeakDetection,
-} from '../perf-companion/bridge/llm-analysis-bridge.js';
-import { convertHeapSummaryToTrace } from '../perf-companion/format/perfetto-formatter.js';
-import { PerfCompanionError } from '../perf-companion/errors.js';
+} from './tool-definitions.js';
+import { parseHeapSnapshot, parseHeapSnapshotFull } from '../parse/heap-snapshot-parser.js';
+import { threeSnapshotDiff } from '../analyze/three-snapshot-diff.js';
+import { extractRetainerChainsForLeaks } from '../analyze/retainer-chain-extractor.js';
+import { analyzeHeapSummary, analyzeLeakDetection } from '../bridge/llm-analysis-bridge.js';
+import { heapSummaryToTrace } from '../format/perfetto-formatter.js';
+import { PerfCompanionError } from '../errors.js';
 
 // ─── Parameters ──────────────────────────────────────────────────────
 
 export interface HeapSnapshotAnalyzeParams {
-  snapshot_path: string;
-  baseline_path?: string;
-  mode: 'summary' | 'diff' | 'leak-detect';
-  top_n?: number;
-  output_format?: 'markdown' | 'json' | 'perfetto';
+  readonly snapshot_path: string;
+  readonly baseline_path?: string;
+  readonly third_path?: string;
+  readonly mode: 'summary' | 'diff' | 'leak-detect';
+  readonly top_n?: number;
+  readonly output_format?: 'markdown' | 'json' | 'perfetto';
 }
 
 // ─── Invocation ──────────────────────────────────────────────────────
@@ -65,13 +45,13 @@ class HeapSnapshotAnalyzeInvocation extends BaseToolInvocation<
   ToolResult
 > {
   constructor(
-    private readonly config: Config,
+    _config: Config, // Used after integration for path resolution via config.workingDir.
     params: HeapSnapshotAnalyzeParams,
     messageBus: MessageBus,
-    _toolName?: string,
-    _toolDisplayName?: string,
+    toolName?: string,
+    toolDisplayName?: string,
   ) {
-    super(params, messageBus, _toolName, _toolDisplayName);
+    super(params, messageBus, toolName, toolDisplayName);
   }
 
   getDescription(): string {
@@ -79,9 +59,12 @@ class HeapSnapshotAnalyzeInvocation extends BaseToolInvocation<
   }
 
   override toolLocations(): ToolLocation[] {
-    const locations: ToolLocation[] = [{ path: this.params.snapshot_path }];
+    const locations: ToolLocation[] = [{ filePath: this.params.snapshot_path }];
     if (this.params.baseline_path) {
-      locations.push({ path: this.params.baseline_path });
+      locations.push({ filePath: this.params.baseline_path });
+    }
+    if (this.params.third_path) {
+      locations.push({ filePath: this.params.third_path });
     }
     return locations;
   }
@@ -101,30 +84,15 @@ class HeapSnapshotAnalyzeInvocation extends BaseToolInvocation<
       if (this.params.mode === 'summary') {
         return await this.analyzeSummary(topN);
       }
-
-      if (this.params.mode === 'diff' || this.params.mode === 'leak-detect') {
-        if (!this.params.baseline_path) {
-          return {
-            llmContent: 'Error: baseline_path is required for diff and leak-detect modes.',
-            returnDisplay: 'Missing baseline_path parameter.',
-            error: { message: 'baseline_path is required for diff/leak-detect modes.' },
-          };
-        }
-        return await this.analyzeDiff(topN);
+      if (this.params.mode === 'diff') {
+        return await this.analyzeLeaks(topN);
       }
-
-      return {
-        llmContent: `Unknown mode: ${this.params.mode}`,
-        returnDisplay: `Error: unknown mode "${this.params.mode}"`,
-        error: { message: `Unknown analysis mode: ${this.params.mode}` },
-      };
-    } catch (err) {
+      return await this.analyzeLeaks(topN);
+    } catch (err: unknown) {
       const message =
-        err instanceof PerfCompanionError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : String(err);
+        err instanceof PerfCompanionError ? err.message
+          : err instanceof Error ? err.message
+          : String(err);
 
       return {
         llmContent: `Heap analysis failed: ${message}`,
@@ -139,7 +107,7 @@ class HeapSnapshotAnalyzeInvocation extends BaseToolInvocation<
 
     const perfettoTrace =
       this.params.output_format === 'perfetto'
-        ? convertHeapSummaryToTrace(summary)
+        ? heapSummaryToTrace(summary, 'heap-analysis', Date.now() * 1000)
         : undefined;
 
     const result = analyzeHeapSummary(summary, perfettoTrace);
@@ -147,35 +115,43 @@ class HeapSnapshotAnalyzeInvocation extends BaseToolInvocation<
     return {
       llmContent: result.llmContext,
       returnDisplay: result.markdownReport,
-      data: {
-        summary: result.summary,
-        suggestions: result.suggestions,
-      },
+      data: { summary: result.summary, suggestions: result.suggestions },
     };
   }
 
-  private async analyzeDiff(topN: number): Promise<ToolResult> {
-    // Parse both snapshots.
-    const baselineSummary = await parseHeapSnapshot(this.params.baseline_path!, { topN });
-    const currentSummary = await parseHeapSnapshot(this.params.snapshot_path, { topN });
+  /**
+   * 3-snapshot leak detection: requires snapshot_path (C), baseline_path (A),
+   * and third_path (B). Runs threeSnapshotDiff(A, B, C), extracts retainer
+   * chains for the top candidates, and formats for the LLM.
+   */
+  private async analyzeLeaks(topN: number): Promise<ToolResult> {
+    const baselinePath = this.params.baseline_path!;
+    const midPath = this.params.third_path ?? this.params.snapshot_path;
 
-    // Compute diff.
-    const diffResult = diffSnapshots(baselineSummary, currentSummary);
+    const [snapshotA, snapshotB, snapshotC] = await Promise.all([
+      parseHeapSnapshotFull(baselinePath, { topN }),
+      parseHeapSnapshotFull(midPath, { topN }),
+      parseHeapSnapshotFull(this.params.snapshot_path, { topN }),
+    ]);
 
-    // For leak-detect mode, also extract retainer chains.
-    let retainerChains: ReadonlyMap<string, readonly import('../perf-companion/types.js').RetainerChain[]> | undefined;
+    const diffResult = threeSnapshotDiff(
+      snapshotA.nodes,
+      snapshotB.nodes,
+      snapshotC.nodes,
+      snapshotC.reverseGraph,
+    );
 
-    if (this.params.mode === 'leak-detect' && diffResult.strongLeakCandidates.length > 0) {
-      const fullSnapshot = await parseHeapSnapshotFull(this.params.snapshot_path);
+    let retainerChains: ReturnType<typeof extractRetainerChainsForLeaks> | undefined;
+
+    if (diffResult.strongLeakCandidates.length > 0) {
       const leakConstructors = diffResult.strongLeakCandidates
         .slice(0, 5)
         .map((c) => c.constructor);
 
       retainerChains = extractRetainerChainsForLeaks(
-        fullSnapshot.nodes,
-        fullSnapshot.edges,
-        fullSnapshot.reverseGraph,
         leakConstructors,
+        snapshotC.nodes,
+        snapshotC.reverseGraph,
       );
     }
 
@@ -200,75 +176,45 @@ export class HeapSnapshotAnalyzeTool extends BaseDeclarativeTool<
   ToolResult
 > {
   static readonly Name = HEAP_SNAPSHOT_ANALYZE_TOOL_NAME;
+  private readonly config: Config;
 
-  constructor(
-    private readonly config: Config,
-    messageBus: MessageBus,
-  ) {
+  constructor(config: Config, messageBus: MessageBus) {
     super(
       HeapSnapshotAnalyzeTool.Name,
       HEAP_SNAPSHOT_ANALYZE_DISPLAY_NAME,
       HEAP_SNAPSHOT_ANALYZE_DEFINITION.base.description,
-      Kind.Read, // Analysis is read-only (reads snapshot files).
+      Kind.Read,
       HEAP_SNAPSHOT_ANALYZE_DEFINITION.base.parametersJsonSchema,
       messageBus,
-      true,  // isOutputMarkdown
-      false, // canUpdateOutput
     );
+    this.config = config;
   }
 
-  protected override validateToolParamValues(
+  protected validateToolParamValues(
     params: HeapSnapshotAnalyzeParams,
   ): string | null {
     if (params.snapshot_path.trim() === '') {
       return 'snapshot_path must be non-empty.';
     }
-
-    if (
-      (params.mode === 'diff' || params.mode === 'leak-detect') &&
-      (!params.baseline_path || params.baseline_path.trim() === '')
-    ) {
-      return `baseline_path is required for "${params.mode}" mode.`;
+    if (params.mode === 'leak-detect') {
+      if (!params.baseline_path || params.baseline_path.trim() === '') {
+        return 'baseline_path is required for leak-detect mode.';
+      }
     }
-
     if (params.top_n !== undefined && params.top_n < 1) {
       return 'top_n must be at least 1.';
     }
-
-    // Validate file access through Config.
-    const validationError = this.config.validatePathAccess(
-      params.snapshot_path,
-      'read',
-    );
-    if (validationError) {
-      return validationError;
-    }
-
-    if (params.baseline_path) {
-      const baselineError = this.config.validatePathAccess(
-        params.baseline_path,
-        'read',
-      );
-      if (baselineError) {
-        return baselineError;
-      }
-    }
-
     return null;
   }
 
   protected createInvocation(
     params: HeapSnapshotAnalyzeParams,
     messageBus: MessageBus,
-    _toolName?: string,
-    _toolDisplayName?: string,
+    toolName?: string,
+    toolDisplayName?: string,
   ): ToolInvocation<HeapSnapshotAnalyzeParams, ToolResult> {
     return new HeapSnapshotAnalyzeInvocation(
-      this.config,
-      params,
-      messageBus,
-      _toolName,
-      _toolDisplayName,
+      this.config, params, messageBus, toolName, toolDisplayName,
     );
   }
 }

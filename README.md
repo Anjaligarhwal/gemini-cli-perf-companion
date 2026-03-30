@@ -93,11 +93,13 @@ Profiles **external** `node --inspect` processes over WebSocket without adding d
 
 Raw heap diffs produce hundreds of false positives. The filter chain eliminates noise:
 
-1. **Monotonic growth** — Only objects with A < B < C (strict increase across all 3 snapshots)
-2. **Minimum count** — Filters objects with fewer than N new instances
-3. **Constructor exclusion** — Removes V8 internals (`(system)`, `(sliced string)`, etc.)
-4. **Growth rate threshold** — Requires >10% growth relative to baseline
-5. **Size floor** — Ignores constructors below a minimum byte threshold
+1. **Constructor exclusion** — Removes known V8 internals (`(system)`, `(sliced string)`, etc.) and prefix patterns (`%`, `__`, `system /`)
+2. **Size floor** — Ignores constructors with absolute size delta below threshold (default: 1 KB)
+3. **Single-instance filter** — One extra small object (< 10 KB) is likely transient noise
+4. **Negative growth** — Objects that were freed between snapshots are not leaks
+5. **Minimum count** — Filters constructors with fewer than N new instances (default: 2)
+
+Additionally, the three-snapshot diff pipeline upstream enforces **monotonic growth** (A < B < C) before candidates reach the noise filter.
 
 ### Retainer Chain Extraction (`src/analyze/retainer-chain-extractor.ts`)
 
@@ -302,7 +304,7 @@ export { CPU_PROFILE_ANALYZE_DEFINITION } from '../cpu-profile-analyze.js';
 - **Testable independently** — 301 tests run without gemini-cli checkout
 - **Integration is mechanical** — copy files, add 4 `maybeRegister()` calls, update imports
 
-The integration tools (`src/integration/`) already extend `BaseDeclarativeTool` and follow the exact pattern of `ReadFileTool` and `WebFetchTool`. The `@ts-nocheck` annotations exist because those imports (`../config/config.js`, `../confirmation-bus/message-bus.js`) resolve only when placed inside the gemini-cli monorepo.
+The integration tools (`src/integration/`) already extend `BaseDeclarativeTool` and follow the exact pattern of `ReadFileTool` and `WebFetchTool`. Framework types (BaseDeclarativeTool, Config, MessageBus) use dependency inversion via `gemini-cli-types.ts` — local interfaces matching gemini-cli's signatures. At integration time, this file is deleted and imports point to the real modules. All integration tools compile under strict TypeScript with zero errors.
 
 ## Upstream Contributions
 
@@ -313,7 +315,7 @@ The integration tools (`src/integration/`) already extend `BaseDeclarativeTool` 
 ## Technology
 
 - **TypeScript 5.3** — Strict mode, ES2022 target, NodeNext modules
-- **Node.js 20+** — `node:inspector/promises`, `node:http`, `node:crypto`
+- **Node.js 18+** — `node:inspector/promises`, `node:http`, `node:crypto`
 - **Vitest** — Fast test runner with native ESM support
 - **Zero external runtime dependencies** — Only devDependencies (vitest, typescript)
 

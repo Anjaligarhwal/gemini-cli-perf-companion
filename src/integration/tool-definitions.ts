@@ -1,6 +1,5 @@
 /**
  * @license
- * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,6 +41,7 @@ export const PARAM_MODE = 'mode';
 export const PARAM_TOP_N = 'top_n';
 export const PARAM_OUTPUT_FORMAT = 'output_format';
 export const PARAM_DURATION_MS = 'duration_ms';
+export const PARAM_THIRD_PATH = 'third_path';
 export const PARAM_PROFILE_PATH = 'profile_path';
 
 // ─── Heap Snapshot Capture Definition ────────────────────────────────
@@ -123,6 +123,12 @@ export const HEAP_SNAPSHOT_ANALYZE_DEFINITION = {
           description:
             'Optional path to a baseline .heapsnapshot for diff/leak detection. ' +
             'When provided, the tool computes object growth between baseline and primary.',
+        },
+        [PARAM_THIRD_PATH]: {
+          type: 'string',
+          description:
+            'Optional path to a mid-point .heapsnapshot (snapshot B) for 3-snapshot leak detection. ' +
+            'When provided with baseline_path (A) and snapshot_path (C), enables the full A→B→C technique.',
         },
         [PARAM_MODE]: {
           type: 'string',

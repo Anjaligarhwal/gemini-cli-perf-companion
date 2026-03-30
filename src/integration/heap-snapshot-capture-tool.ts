@@ -1,55 +1,45 @@
 /**
  * @license
- * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
-// @ts-nocheck — This file targets gemini-cli's packages/core/src/tools/.
-// Imports resolve only when placed inside the gemini-cli monorepo.
 
 /**
  * BaseDeclarativeTool integration for heap snapshot capture.
  *
- * This file follows the exact pattern from gemini-cli's ReadFileTool
- * and WebFetchTool. It will be placed at:
- *   packages/core/src/tools/heap-snapshot-capture.ts
+ * Target location: packages/core/src/tools/heap-snapshot-capture.ts
  *
- * Registration in config.ts:
- *   maybeRegister(HeapSnapshotCaptureTool, () =>
- *     registry.registerTool(new HeapSnapshotCaptureTool(this, this.messageBus)),
- *   );
+ * Follows the exact pattern from gemini-cli's ReadFileTool and WebFetchTool.
+ * Framework types come from gemini-cli-types.ts (dependency inversion);
+ * engine code imports from the real local modules.
+ *
+ * At integration time, replace gemini-cli-types.ts imports with:
+ *   MessageBus  ← '../confirmation-bus/message-bus.js'
+ *   tools.*     ← './tools.js'
+ *   Config      ← '../config/config.js'
  */
 
-import type { MessageBus } from '../confirmation-bus/message-bus.js';
-import {
-  BaseDeclarativeTool,
-  BaseToolInvocation,
-  Kind,
-  type ToolInvocation,
-  type ToolLocation,
-  type ToolResult,
-} from './tools.js';
-import type { Config } from '../config/config.js';
+import type { MessageBus, Config, ToolLocation, ToolInvocation } from './gemini-cli-types.js';
+import { BaseDeclarativeTool, BaseToolInvocation, Kind, type ToolResult } from './gemini-cli-types.js';
 import {
   HEAP_SNAPSHOT_CAPTURE_TOOL_NAME,
   HEAP_SNAPSHOT_CAPTURE_DISPLAY_NAME,
   HEAP_SNAPSHOT_CAPTURE_DEFINITION,
-} from './definitions/coreTools.js';
-import { captureHeapSnapshot } from '../perf-companion/capture/heap-snapshot-capture.js';
-import type { CaptureOptions } from '../perf-companion/types.js';
-import { PerfCompanionError } from '../perf-companion/errors.js';
-import { formatBytes } from '../perf-companion/utils.js';
+} from './tool-definitions.js';
+import { captureHeapSnapshot } from '../capture/heap-snapshot-capture.js';
+import type { CaptureOptions } from '../types.js';
+import { PerfCompanionError } from '../errors.js';
+import { formatBytes } from '../utils.js';
 
 // ─── Parameters ──────────────────────────────────────────────────────
 
 export interface HeapSnapshotCaptureParams {
-  target: 'self' | 'remote';
-  host?: string;
-  port?: number;
-  label?: string;
-  output_dir?: string;
-  force_gc?: boolean;
-  timeout_ms?: number;
+  readonly target: 'self' | 'remote';
+  readonly host?: string;
+  readonly port?: number;
+  readonly label?: string;
+  readonly output_dir?: string;
+  readonly force_gc?: boolean;
+  readonly timeout_ms?: number;
 }
 
 // ─── Invocation ──────────────────────────────────────────────────────
@@ -59,13 +49,13 @@ class HeapSnapshotCaptureInvocation extends BaseToolInvocation<
   ToolResult
 > {
   constructor(
-    private readonly config: Config,
+    _config: Config, // Used after integration for path resolution via config.workingDir.
     params: HeapSnapshotCaptureParams,
     messageBus: MessageBus,
-    _toolName?: string,
-    _toolDisplayName?: string,
+    toolName?: string,
+    toolDisplayName?: string,
   ) {
-    super(params, messageBus, _toolName, _toolDisplayName);
+    super(params, messageBus, toolName, toolDisplayName);
   }
 
   getDescription(): string {
@@ -78,11 +68,18 @@ class HeapSnapshotCaptureInvocation extends BaseToolInvocation<
   }
 
   override toolLocations(): ToolLocation[] {
-    // No filesystem location to highlight — output path is dynamic.
     return [];
   }
 
   async execute(signal: AbortSignal): Promise<ToolResult> {
+    if (signal.aborted) {
+      return {
+        llmContent: 'Heap snapshot capture was cancelled.',
+        returnDisplay: 'Cancelled.',
+        error: { message: 'Capture cancelled by user.' },
+      };
+    }
+
     const options: CaptureOptions = {
       target: this.params.target,
       host: this.params.host,
@@ -94,33 +91,20 @@ class HeapSnapshotCaptureInvocation extends BaseToolInvocation<
     };
 
     try {
-      // Respect abort signal.
-      if (signal.aborted) {
-        return {
-          llmContent: 'Heap snapshot capture was cancelled.',
-          returnDisplay: 'Cancelled.',
-          error: { message: 'Capture cancelled by user.' },
-        };
-      }
-
       const result = await captureHeapSnapshot(options);
-
       const sizeStr = formatBytes(result.sizeBytes);
-      const summary =
-        `Heap snapshot captured successfully.\n` +
-        `- **File:** \`${result.filePath}\`\n` +
-        `- **Size:** ${sizeStr}\n` +
-        `- **Duration:** ${result.durationMs}ms\n` +
-        `- **Label:** ${result.label}`;
-
-      const llmContent =
-        `Heap snapshot saved to ${result.filePath} ` +
-        `(${sizeStr}, ${result.durationMs}ms). ` +
-        `Use heap_snapshot_analyze with this path to detect leaks.`;
 
       return {
-        llmContent,
-        returnDisplay: summary,
+        llmContent:
+          `Heap snapshot saved to ${result.filePath} ` +
+          `(${sizeStr}, ${result.durationMs}ms). ` +
+          `Use heap_snapshot_analyze with this path to detect leaks.`,
+        returnDisplay:
+          `Heap snapshot captured successfully.\n` +
+          `- **File:** \`${result.filePath}\`\n` +
+          `- **Size:** ${sizeStr}\n` +
+          `- **Duration:** ${result.durationMs}ms\n` +
+          `- **Label:** ${result.label}`,
         data: {
           filePath: result.filePath,
           sizeBytes: result.sizeBytes,
@@ -128,14 +112,11 @@ class HeapSnapshotCaptureInvocation extends BaseToolInvocation<
           label: result.label,
         },
       };
-    } catch (err) {
+    } catch (err: unknown) {
       const message =
-        err instanceof PerfCompanionError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : String(err);
-
+        err instanceof PerfCompanionError ? err.message
+          : err instanceof Error ? err.message
+          : String(err);
       const recoverable =
         err instanceof PerfCompanionError ? err.recoverable : false;
 
@@ -156,31 +137,27 @@ export class HeapSnapshotCaptureTool extends BaseDeclarativeTool<
   ToolResult
 > {
   static readonly Name = HEAP_SNAPSHOT_CAPTURE_TOOL_NAME;
+  private readonly config: Config;
 
-  constructor(
-    private readonly config: Config,
-    messageBus: MessageBus,
-  ) {
+  constructor(config: Config, messageBus: MessageBus) {
     super(
       HeapSnapshotCaptureTool.Name,
       HEAP_SNAPSHOT_CAPTURE_DISPLAY_NAME,
       HEAP_SNAPSHOT_CAPTURE_DEFINITION.base.description,
-      Kind.Execute, // Captures have side effects (write files).
+      Kind.Execute,
       HEAP_SNAPSHOT_CAPTURE_DEFINITION.base.parametersJsonSchema,
       messageBus,
-      true,  // isOutputMarkdown
-      false, // canUpdateOutput
     );
+    this.config = config;
   }
 
-  protected override validateToolParamValues(
+  protected validateToolParamValues(
     params: HeapSnapshotCaptureParams,
   ): string | null {
     if (params.target === 'remote') {
       if (params.port !== undefined && (params.port < 1 || params.port > 65535)) {
         return 'Port must be between 1 and 65535.';
       }
-      // Security: only allow localhost connections.
       if (
         params.host !== undefined &&
         params.host !== '127.0.0.1' &&
@@ -190,27 +167,20 @@ export class HeapSnapshotCaptureTool extends BaseDeclarativeTool<
         return 'Remote capture only supports localhost connections (127.0.0.1, localhost, ::1).';
       }
     }
-
     if (params.timeout_ms !== undefined && params.timeout_ms < 1000) {
       return 'Timeout must be at least 1000ms.';
     }
-
     return null;
   }
 
   protected createInvocation(
     params: HeapSnapshotCaptureParams,
     messageBus: MessageBus,
-    _toolName?: string,
-    _toolDisplayName?: string,
+    toolName?: string,
+    toolDisplayName?: string,
   ): ToolInvocation<HeapSnapshotCaptureParams, ToolResult> {
     return new HeapSnapshotCaptureInvocation(
-      this.config,
-      params,
-      messageBus,
-      _toolName,
-      _toolDisplayName,
+      this.config, params, messageBus, toolName, toolDisplayName,
     );
   }
 }
-

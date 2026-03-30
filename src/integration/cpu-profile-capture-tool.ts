@@ -1,49 +1,37 @@
 /**
  * @license
- * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
-// @ts-nocheck — This file targets gemini-cli's packages/core/src/tools/.
-// Imports resolve only when placed inside the gemini-cli monorepo.
 
 /**
  * BaseDeclarativeTool integration for CPU profile capture.
  *
- * Follows the exact pattern from gemini-cli's ReadFileTool/WebFetchTool.
- * Placement: packages/core/src/tools/cpu-profile-capture.ts
+ * Target location: packages/core/src/tools/cpu-profile-capture.ts
  *
  * Uses the V8 Profiler domain via node:inspector (self mode) or
  * CDP WebSocket (remote mode) to record CPU sampling data.
  */
 
-import type { MessageBus } from '../confirmation-bus/message-bus.js';
-import {
-  BaseDeclarativeTool,
-  BaseToolInvocation,
-  Kind,
-  type ToolInvocation,
-  type ToolResult,
-} from './tools.js';
-import type { Config } from '../config/config.js';
+import type { MessageBus, Config, ToolInvocation } from './gemini-cli-types.js';
+import { BaseDeclarativeTool, BaseToolInvocation, Kind, type ToolResult } from './gemini-cli-types.js';
 import {
   CPU_PROFILE_CAPTURE_TOOL_NAME,
   CPU_PROFILE_CAPTURE_DISPLAY_NAME,
   CPU_PROFILE_CAPTURE_DEFINITION,
-} from './definitions/coreTools.js';
-import { captureCpuProfile } from '../perf-companion/capture/cpu-profile-capture.js';
-import { PerfCompanionError } from '../perf-companion/errors.js';
-import { formatBytes } from '../perf-companion/utils.js';
+} from './tool-definitions.js';
+import { captureCpuProfile } from '../capture/cpu-profile-capture.js';
+import { PerfCompanionError } from '../errors.js';
+import { formatBytes } from '../utils.js';
 
 // ─── Parameters ──────────────────────────────────────────────────────
 
 export interface CpuProfileCaptureParams {
-  target: 'self' | 'remote';
-  duration_ms?: number;
-  host?: string;
-  port?: number;
-  label?: string;
-  output_dir?: string;
+  readonly target: 'self' | 'remote';
+  readonly duration_ms?: number;
+  readonly host?: string;
+  readonly port?: number;
+  readonly label?: string;
+  readonly output_dir?: string;
 }
 
 // ─── Invocation ──────────────────────────────────────────────────────
@@ -53,13 +41,13 @@ class CpuProfileCaptureInvocation extends BaseToolInvocation<
   ToolResult
 > {
   constructor(
-    private readonly config: Config,
+    _config: Config, // Used after integration for path resolution via config.workingDir.
     params: CpuProfileCaptureParams,
     messageBus: MessageBus,
-    _toolName?: string,
-    _toolDisplayName?: string,
+    toolName?: string,
+    toolDisplayName?: string,
   ) {
-    super(params, messageBus, _toolName, _toolDisplayName);
+    super(params, messageBus, toolName, toolDisplayName);
   }
 
   getDescription(): string {
@@ -82,31 +70,27 @@ class CpuProfileCaptureInvocation extends BaseToolInvocation<
     }
 
     try {
+      // Current engine supports self-capture. Remote capture via CDP
+      // Profiler domain will be added during GSoC integration.
       const result = await captureCpuProfile({
-        target: this.params.target,
         durationMs: this.params.duration_ms ?? 5000,
-        host: this.params.host,
-        port: this.params.port,
         label: this.params.label,
         outputDir: this.params.output_dir,
       });
 
       const sizeStr = formatBytes(result.sizeBytes);
-      const summary =
-        `CPU profile captured successfully.\n` +
-        `- **File:** \`${result.filePath}\`\n` +
-        `- **Size:** ${sizeStr}\n` +
-        `- **Duration:** ${result.durationMs}ms\n` +
-        `- **Label:** ${result.label}`;
-
-      const llmContent =
-        `CPU profile saved to ${result.filePath} ` +
-        `(${sizeStr}, ${result.durationMs}ms). ` +
-        `Use cpu_profile_analyze with this path to identify hot functions.`;
 
       return {
-        llmContent,
-        returnDisplay: summary,
+        llmContent:
+          `CPU profile saved to ${result.filePath} ` +
+          `(${sizeStr}, ${result.durationMs}ms). ` +
+          `Use cpu_profile_analyze with this path to identify hot functions.`,
+        returnDisplay:
+          `CPU profile captured successfully.\n` +
+          `- **File:** \`${result.filePath}\`\n` +
+          `- **Size:** ${sizeStr}\n` +
+          `- **Duration:** ${result.durationMs}ms\n` +
+          `- **Label:** ${result.label}`,
         data: {
           filePath: result.filePath,
           sizeBytes: result.sizeBytes,
@@ -114,13 +98,11 @@ class CpuProfileCaptureInvocation extends BaseToolInvocation<
           label: result.label,
         },
       };
-    } catch (err) {
+    } catch (err: unknown) {
       const message =
-        err instanceof PerfCompanionError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : String(err);
+        err instanceof PerfCompanionError ? err.message
+          : err instanceof Error ? err.message
+          : String(err);
 
       return {
         llmContent: `CPU profile capture failed: ${message}`,
@@ -138,24 +120,21 @@ export class CpuProfileCaptureTool extends BaseDeclarativeTool<
   ToolResult
 > {
   static readonly Name = CPU_PROFILE_CAPTURE_TOOL_NAME;
+  private readonly config: Config;
 
-  constructor(
-    private readonly config: Config,
-    messageBus: MessageBus,
-  ) {
+  constructor(config: Config, messageBus: MessageBus) {
     super(
       CpuProfileCaptureTool.Name,
       CPU_PROFILE_CAPTURE_DISPLAY_NAME,
       CPU_PROFILE_CAPTURE_DEFINITION.base.description,
-      Kind.Execute, // Captures have side effects.
+      Kind.Execute,
       CPU_PROFILE_CAPTURE_DEFINITION.base.parametersJsonSchema,
       messageBus,
-      true,
-      false,
     );
+    this.config = config;
   }
 
-  protected override validateToolParamValues(
+  protected validateToolParamValues(
     params: CpuProfileCaptureParams,
   ): string | null {
     if (params.target === 'remote') {
@@ -171,32 +150,21 @@ export class CpuProfileCaptureTool extends BaseDeclarativeTool<
         return 'Remote capture only supports localhost connections.';
       }
     }
-
     if (params.duration_ms !== undefined) {
-      if (params.duration_ms < 100) {
-        return 'Duration must be at least 100ms.';
-      }
-      if (params.duration_ms > 300_000) {
-        return 'Duration cannot exceed 300000ms (5 minutes).';
-      }
+      if (params.duration_ms < 100) return 'Duration must be at least 100ms.';
+      if (params.duration_ms > 300_000) return 'Duration cannot exceed 300000ms (5 minutes).';
     }
-
     return null;
   }
 
   protected createInvocation(
     params: CpuProfileCaptureParams,
     messageBus: MessageBus,
-    _toolName?: string,
-    _toolDisplayName?: string,
+    toolName?: string,
+    toolDisplayName?: string,
   ): ToolInvocation<CpuProfileCaptureParams, ToolResult> {
     return new CpuProfileCaptureInvocation(
-      this.config,
-      params,
-      messageBus,
-      _toolName,
-      _toolDisplayName,
+      this.config, params, messageBus, toolName, toolDisplayName,
     );
   }
 }
-

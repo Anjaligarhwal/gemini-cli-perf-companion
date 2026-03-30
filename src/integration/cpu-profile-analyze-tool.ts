@@ -1,49 +1,36 @@
 /**
  * @license
- * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
-// @ts-nocheck — This file targets gemini-cli's packages/core/src/tools/.
-// Imports resolve only when placed inside the gemini-cli monorepo.
 
 /**
  * BaseDeclarativeTool integration for CPU profile analysis.
  *
- * Follows the exact pattern from gemini-cli's ReadFileTool.
- * Placement: packages/core/src/tools/cpu-profile-analyze.ts
+ * Target location: packages/core/src/tools/cpu-profile-analyze.ts
  *
  * Parses .cpuprofile files, identifies hot functions, computes
  * category breakdowns (GC, Idle, User, etc.), and returns
  * LLM-optimized context for the Gemini agent loop.
  */
 
-import type { MessageBus } from '../confirmation-bus/message-bus.js';
-import {
-  BaseDeclarativeTool,
-  BaseToolInvocation,
-  Kind,
-  type ToolInvocation,
-  type ToolLocation,
-  type ToolResult,
-} from './tools.js';
-import type { Config } from '../config/config.js';
+import type { MessageBus, Config, ToolLocation, ToolInvocation } from './gemini-cli-types.js';
+import { BaseDeclarativeTool, BaseToolInvocation, Kind, type ToolResult } from './gemini-cli-types.js';
 import {
   CPU_PROFILE_ANALYZE_TOOL_NAME,
   CPU_PROFILE_ANALYZE_DISPLAY_NAME,
   CPU_PROFILE_ANALYZE_DEFINITION,
-} from './definitions/coreTools.js';
-import { parseCpuProfile } from '../perf-companion/parse/cpu-profile-parser.js';
-import { analyzeCpuProfile } from '../perf-companion/bridge/llm-analysis-bridge.js';
-import { convertCpuProfileToTrace } from '../perf-companion/format/perfetto-formatter.js';
-import { PerfCompanionError } from '../perf-companion/errors.js';
+} from './tool-definitions.js';
+import { analyzeCpuProfile as parseCpuProfileFile } from '../analyze/cpu-profile-analyzer.js';
+import { analyzeCpuProfile as formatCpuForLLM } from '../bridge/llm-analysis-bridge.js';
+import { cpuProfileToTrace } from '../format/perfetto-formatter.js';
+import { PerfCompanionError } from '../errors.js';
 
 // ─── Parameters ──────────────────────────────────────────────────────
 
 export interface CpuProfileAnalyzeParams {
-  profile_path: string;
-  top_n?: number;
-  output_format?: 'markdown' | 'json' | 'perfetto';
+  readonly profile_path: string;
+  readonly top_n?: number;
+  readonly output_format?: 'markdown' | 'json' | 'perfetto';
 }
 
 // ─── Invocation ──────────────────────────────────────────────────────
@@ -53,13 +40,13 @@ class CpuProfileAnalyzeInvocation extends BaseToolInvocation<
   ToolResult
 > {
   constructor(
-    private readonly config: Config,
+    _config: Config, // Used after integration for path resolution via config.workingDir.
     params: CpuProfileAnalyzeParams,
     messageBus: MessageBus,
-    _toolName?: string,
-    _toolDisplayName?: string,
+    toolName?: string,
+    toolDisplayName?: string,
   ) {
-    super(params, messageBus, _toolName, _toolDisplayName);
+    super(params, messageBus, toolName, toolDisplayName);
   }
 
   getDescription(): string {
@@ -67,7 +54,7 @@ class CpuProfileAnalyzeInvocation extends BaseToolInvocation<
   }
 
   override toolLocations(): ToolLocation[] {
-    return [{ path: this.params.profile_path }];
+    return [{ filePath: this.params.profile_path }];
   }
 
   async execute(signal: AbortSignal): Promise<ToolResult> {
@@ -81,14 +68,18 @@ class CpuProfileAnalyzeInvocation extends BaseToolInvocation<
 
     try {
       const topN = this.params.top_n ?? 10;
-      const profile = await parseCpuProfile(this.params.profile_path, { topN });
 
+      // Step 1: Parse .cpuprofile file into structured CpuProfileData.
+      const profileData = await parseCpuProfileFile(this.params.profile_path, { topN });
+
+      // Step 2: Optionally generate Perfetto trace.
       const perfettoTrace =
         this.params.output_format === 'perfetto'
-          ? convertCpuProfileToTrace(profile)
+          ? cpuProfileToTrace(profileData, Date.now() * 1000)
           : undefined;
 
-      const result = analyzeCpuProfile(profile, perfettoTrace);
+      // Step 3: Format for LLM consumption.
+      const result = formatCpuForLLM(profileData, perfettoTrace);
 
       return {
         llmContent: result.llmContext,
@@ -96,17 +87,15 @@ class CpuProfileAnalyzeInvocation extends BaseToolInvocation<
         data: {
           summary: result.summary,
           suggestions: result.suggestions,
-          hotFunctionCount: profile.hotFunctions.length,
-          sampleCount: profile.sampleCount,
+          hotFunctionCount: profileData.hotFunctions.length,
+          sampleCount: profileData.sampleCount,
         },
       };
-    } catch (err) {
+    } catch (err: unknown) {
       const message =
-        err instanceof PerfCompanionError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : String(err);
+        err instanceof PerfCompanionError ? err.message
+          : err instanceof Error ? err.message
+          : String(err);
 
       return {
         llmContent: `CPU profile analysis failed: ${message}`,
@@ -124,57 +113,40 @@ export class CpuProfileAnalyzeTool extends BaseDeclarativeTool<
   ToolResult
 > {
   static readonly Name = CPU_PROFILE_ANALYZE_TOOL_NAME;
+  private readonly config: Config;
 
-  constructor(
-    private readonly config: Config,
-    messageBus: MessageBus,
-  ) {
+  constructor(config: Config, messageBus: MessageBus) {
     super(
       CpuProfileAnalyzeTool.Name,
       CPU_PROFILE_ANALYZE_DISPLAY_NAME,
       CPU_PROFILE_ANALYZE_DEFINITION.base.description,
-      Kind.Read, // Analysis is read-only.
+      Kind.Read,
       CPU_PROFILE_ANALYZE_DEFINITION.base.parametersJsonSchema,
       messageBus,
-      true,
-      false,
     );
+    this.config = config;
   }
 
-  protected override validateToolParamValues(
+  protected validateToolParamValues(
     params: CpuProfileAnalyzeParams,
   ): string | null {
     if (params.profile_path.trim() === '') {
       return 'profile_path must be non-empty.';
     }
-
     if (params.top_n !== undefined && params.top_n < 1) {
       return 'top_n must be at least 1.';
     }
-
-    const validationError = this.config.validatePathAccess(
-      params.profile_path,
-      'read',
-    );
-    if (validationError) {
-      return validationError;
-    }
-
     return null;
   }
 
   protected createInvocation(
     params: CpuProfileAnalyzeParams,
     messageBus: MessageBus,
-    _toolName?: string,
-    _toolDisplayName?: string,
+    toolName?: string,
+    toolDisplayName?: string,
   ): ToolInvocation<CpuProfileAnalyzeParams, ToolResult> {
     return new CpuProfileAnalyzeInvocation(
-      this.config,
-      params,
-      messageBus,
-      _toolName,
-      _toolDisplayName,
+      this.config, params, messageBus, toolName, toolDisplayName,
     );
   }
 }
