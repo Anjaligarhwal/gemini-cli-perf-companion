@@ -229,73 +229,103 @@ export class CdpClient extends EventEmitter {
   // ── WebSocket Discovery ───────────────────────────────────────────
 
   /**
-   * Discover the debugger WebSocket URL via the `/json/version` endpoint.
+   * Discover the debugger WebSocket URL.
    *
-   * Node.js exposes this HTTP API when started with `--inspect`.
+   * Tries two V8 inspector HTTP endpoints in order:
+   *   1. `/json/version` — returns `{ webSocketDebuggerUrl }` on some
+   *      Node.js versions (< v22).
+   *   2. `/json` — returns a target list `[{ webSocketDebuggerUrl }]`.
+   *      This is the primary endpoint on Node.js v22+ where the version
+   *      endpoint no longer includes the WebSocket URL.
+   *
+   * This two-step discovery ensures compatibility across Node.js 18–22+.
    */
-  private discoverWsUrl(
+  private async discoverWsUrl(
     host: string,
     port: number,
     timeoutMs: number,
   ): Promise<string> {
+    // Attempt 1: /json/version (returns object with optional wsUrl).
+    const versionBody = await this.httpGetWithTimeout(
+      `http://${host}:${port}/json/version`,
+      timeoutMs,
+    );
+
+    try {
+      const info = JSON.parse(versionBody) as Record<string, string>;
+      const wsUrl = info['webSocketDebuggerUrl'];
+      if (typeof wsUrl === 'string' && wsUrl.startsWith('ws://')) {
+        return wsUrl;
+      }
+    } catch {
+      // Fall through to /json endpoint.
+    }
+
+    // Attempt 2: /json (returns array of targets).
+    const listBody = await this.httpGetWithTimeout(
+      `http://${host}:${port}/json`,
+      timeoutMs,
+    );
+
+    try {
+      const targets = JSON.parse(listBody) as Array<Record<string, string>>;
+      if (Array.isArray(targets) && targets.length > 0) {
+        const wsUrl = targets[0]['webSocketDebuggerUrl'];
+        if (typeof wsUrl === 'string' && wsUrl.startsWith('ws://')) {
+          return wsUrl;
+        }
+      }
+    } catch {
+      // Fall through to error.
+    }
+
+    throw new PerfCompanionError(
+      `Could not discover WebSocket URL from ${host}:${port}. ` +
+        'Neither /json/version nor /json returned a valid webSocketDebuggerUrl. ' +
+        'Ensure the target process is running with --inspect.',
+      PerfErrorCode.INSPECTOR_CONNECT_FAILED,
+      /* recoverable= */ false,
+    );
+  }
+
+  /**
+   * HTTP GET with timeout, returning the response body as a string.
+   *
+   * @throws {PerfCompanionError} On timeout or connection error.
+   */
+  private httpGetWithTimeout(url: string, timeoutMs: number): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         req.destroy();
         reject(
           new PerfCompanionError(
-            `Discovery timed out connecting to ${host}:${port}`,
+            `Discovery timed out connecting to ${url}`,
             PerfErrorCode.INSPECTOR_CONNECT_FAILED,
-            true,
+            /* recoverable= */ true,
           ),
         );
       }, timeoutMs);
 
-      const req = http.get(
-        `http://${host}:${port}/json/version`,
-        (res) => {
-          let body = '';
-          res.setEncoding('utf-8');
-          res.on('data', (chunk: string) => {
-            body += chunk;
-          });
-          res.on('end', () => {
-            clearTimeout(timer);
-            try {
-              const info = JSON.parse(body) as Record<string, string>;
-              const wsUrl = info['webSocketDebuggerUrl'];
-              if (typeof wsUrl !== 'string' || !wsUrl.startsWith('ws://')) {
-                reject(
-                  new PerfCompanionError(
-                    `Invalid debugger WebSocket URL: ${String(wsUrl)}`,
-                    PerfErrorCode.INSPECTOR_CONNECT_FAILED,
-                    false,
-                  ),
-                );
-                return;
-              }
-              resolve(wsUrl);
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reject(
-                new PerfCompanionError(
-                  `Failed to parse /json/version response: ${msg}`,
-                  PerfErrorCode.INSPECTOR_CONNECT_FAILED,
-                  false,
-                ),
-              );
-            }
-          });
-        },
-      );
+      const req = http.get(url, (res) => {
+        let body = '';
+        res.setEncoding('utf-8');
+        res.on('data', (chunk: string) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          clearTimeout(timer);
+          resolve(body);
+        });
+      });
 
       req.on('error', (err) => {
         clearTimeout(timer);
         reject(
           new PerfCompanionError(
-            `Cannot connect to debugger at ${host}:${port}: ${err.message}. ` +
+            `Cannot connect to debugger at ${url}: ${err.message}. ` +
               'Ensure the target process is running with --inspect.',
             PerfErrorCode.INSPECTOR_CONNECT_FAILED,
-            true,
+            /* recoverable= */ true,
           ),
         );
       });
