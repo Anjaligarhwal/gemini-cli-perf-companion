@@ -48,7 +48,7 @@ import type { RetainerChain, RetainerNode, ObjectGrowthRecord } from '../types.j
 /**
  * Root cause category for a detected memory leak.
  */
-export const enum LeakCategory {
+export enum LeakCategory {
   EVENT_LISTENER = 'EVENT_LISTENER',
   UNBOUNDED_CACHE = 'UNBOUNDED_CACHE',
   CLOSURE_CAPTURE = 'CLOSURE_CAPTURE',

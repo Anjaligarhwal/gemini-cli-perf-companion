@@ -107,7 +107,6 @@ const METHOD_TIMEOUT_MS = 60_000;
  * ```
  */
 export class CdpClient extends EventEmitter {
-  private socket: ReturnType<typeof http.request> | null = null;
   private rawSocket: import('node:net').Socket | null = null;
   private nextId = 1;
   private readonly pending = new Map<number, PendingRequest>();
@@ -216,7 +215,6 @@ export class CdpClient extends EventEmitter {
     }
 
     this.rawSocket = null;
-    this.socket = null;
     this.connected = false;
     this.receiveBuffer = Buffer.alloc(0);
   }
@@ -373,7 +371,6 @@ export class CdpClient extends EventEmitter {
         clearTimeout(timer);
 
         this.rawSocket = socket;
-        this.socket = req;
 
         // Process any data included in the upgrade response.
         if (head.length > 0) {
@@ -491,7 +488,8 @@ export class CdpClient extends EventEmitter {
       if (frame.opcode === 0x1) {
         this.handleMessage(frame.payload.toString('utf-8'));
       } else if (frame.opcode === 0x8) {
-        // Server initiated close.
+        // Server initiated close — best-effort cleanup; errors during
+        // teardown are non-recoverable and safe to discard.
         this.disconnect().catch(() => {});
         break;
       } else if (frame.opcode === 0x9) {
@@ -527,7 +525,8 @@ export class CdpClient extends EventEmitter {
       const high = buf.readUInt32BE(2);
       const low = buf.readUInt32BE(6);
       if (high > 0) {
-        // Payload > 4GB — reject to prevent OOM.
+        // Payload > 4 GB — reject to prevent OOM.  Best-effort teardown;
+        // errors during cleanup are non-recoverable and safe to discard.
         this.disconnect().catch(() => {});
         return null;
       }
@@ -535,7 +534,8 @@ export class CdpClient extends EventEmitter {
       offset = 10;
     }
 
-    // Guard against pathological payloads.
+    // Guard against pathological payloads.  Best-effort teardown;
+    // errors during cleanup are non-recoverable and safe to discard.
     if (payloadLength > MAX_MESSAGE_SIZE) {
       this.disconnect().catch(() => {});
       return null;

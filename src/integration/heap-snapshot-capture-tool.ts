@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// @ts-nocheck — This file targets gemini-cli's packages/core/src/tools/.
+// Imports resolve only when placed inside the gemini-cli monorepo.
+
 /**
  * BaseDeclarativeTool integration for heap snapshot capture.
  *
@@ -35,6 +38,7 @@ import {
 import { captureHeapSnapshot } from '../perf-companion/capture/heap-snapshot-capture.js';
 import type { CaptureOptions } from '../perf-companion/types.js';
 import { PerfCompanionError } from '../perf-companion/errors.js';
+import { formatBytes } from '../perf-companion/utils.js';
 
 // ─── Parameters ──────────────────────────────────────────────────────
 
@@ -210,10 +214,3 @@ export class HeapSnapshotCaptureTool extends BaseDeclarativeTool<
   }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}

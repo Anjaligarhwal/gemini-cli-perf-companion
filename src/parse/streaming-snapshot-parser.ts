@@ -46,6 +46,7 @@ import type {
   HeapSnapshotSummary,
 } from '../types.js';
 import { PerfCompanionError, PerfErrorCode } from '../errors.js';
+import { formatBytes } from '../utils.js';
 import { parseNodes, aggregateByConstructor } from './node-parser.js';
 import { parseEdges, buildReverseGraph } from './edge-parser.js';
 import type { ParseOptions, ParsedHeapSnapshot } from './heap-snapshot-parser.js';
@@ -105,6 +106,7 @@ export async function parseHeapSnapshotStreaming(
   const topN = options?.topN ?? DEFAULT_TOP_N;
   const signal = options?.signal;
   const onProgress = options?.onProgress;
+  const onWarning = options?.onWarning;
   const chunkSize = options?.chunkSize ?? DEFAULT_CHUNK_SIZE;
 
   const startTime = performance.now();
@@ -173,9 +175,9 @@ export async function parseHeapSnapshotStreaming(
         onProgress(bytesProcessed, totalBytes);
       }
 
-      if (!pressureWarned && process.memoryUsage().rss > pressureThreshold) {
+      if (!pressureWarned && onWarning && process.memoryUsage().rss > pressureThreshold) {
         const rssMb = (process.memoryUsage().rss / 1_048_576).toFixed(0);
-        console.warn(
+        onWarning(
           `[perf-companion] Streaming parser memory pressure: RSS=${rssMb} MB`,
         );
         pressureWarned = true;
@@ -316,8 +318,6 @@ class SnapshotStreamProcessor {
 
   // ── Parsed metadata ────────────────────────────────────────────────
   private snapshotMeta: HeapSnapshotMeta | undefined;
-  private nodeCount: number | undefined;
-  private edgeCount: number | undefined;
 
   // ── Result accessors ───────────────────────────────────────────────
 
@@ -631,14 +631,6 @@ class SnapshotStreamProcessor {
     // Release the buffer immediately.
     this.snapshotBuffer = '';
 
-    // Extract counts for optional pre-allocation.
-    if (typeof raw['node_count'] === 'number') {
-      this.nodeCount = raw['node_count'] as number;
-    }
-    if (typeof raw['edge_count'] === 'number') {
-      this.edgeCount = raw['edge_count'] as number;
-    }
-
     // Extract and validate metadata.
     const meta = raw['meta'] as Record<string, unknown> | undefined;
     if (meta === undefined) {
@@ -946,11 +938,3 @@ function buildTopConstructors(
   return groups.slice(0, topN);
 }
 
-// ─── Formatting ──────────────────────────────────────────────────────
-
-/** Format a byte count for error messages. */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}

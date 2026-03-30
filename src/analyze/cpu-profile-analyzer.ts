@@ -34,6 +34,7 @@
 import { readFile } from 'node:fs/promises';
 import type { CpuProfileData, HotFunction, CategoryBreakdown } from '../types.js';
 import { PerfCompanionError, PerfErrorCode } from '../errors.js';
+import { formatMicroseconds, abbreviateScript } from '../utils.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
 
@@ -456,20 +457,6 @@ function computeCategoryBreakdown(
 }
 
 // ─── Private: Formatting Helpers ─────────────────────────────────────
-
-/** Format microseconds to a human-readable string. */
-function formatMicroseconds(us: number): string {
-  if (us < 1000) return `${us.toFixed(0)} μs`;
-  if (us < 1_000_000) return `${(us / 1000).toFixed(1)} ms`;
-  return `${(us / 1_000_000).toFixed(2)} s`;
-}
-
-/** Abbreviate a script URL to just the filename. */
-function abbreviateScript(url: string): string {
-  if (!url || url === '(native)') return url;
-  const lastSlash = url.lastIndexOf('/');
-  return lastSlash >= 0 ? url.slice(lastSlash + 1) : url;
-}
 
 /** Render a text progress bar for category display. */
 function progressBar(percentage: number): string {

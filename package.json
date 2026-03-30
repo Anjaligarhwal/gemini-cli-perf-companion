@@ -1,17 +1,26 @@
 {
   "name": "gemini-cli-perf-companion",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "V8 heap snapshot and CPU profile analysis engine for gemini-cli — leak detection, retainer chains, root cause classification, and Perfetto visualization.",
+  "author": "Anjali Garhwal",
+  "license": "Apache-2.0",
+  "type": "module",
   "scripts": {
     "test": "vitest run",
     "build": "tsc",
-    "demo": "npx tsx src/demo.ts"
+    "demo": "npx tsx src/demo.ts",
+    "demo:external": "npx tsx src/demo-external.ts",
+    "demo:dogfood": "npx tsx src/dogfood-gemini-cli.ts"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "type": "module",
+  "keywords": [
+    "performance",
+    "memory-leak",
+    "heap-snapshot",
+    "cpu-profile",
+    "v8",
+    "perfetto",
+    "gemini-cli"
+  ],
   "devDependencies": {
     "@types/node": "^20.19.37",
     "ts-node": "^10.9.2",

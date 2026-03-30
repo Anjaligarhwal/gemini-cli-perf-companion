@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// @ts-nocheck — This file targets gemini-cli's packages/core/src/tools/.
+// Imports resolve only when placed inside the gemini-cli monorepo.
+
 /**
  * BaseDeclarativeTool integration for CPU profile capture.
  *
@@ -30,6 +33,7 @@ import {
 } from './definitions/coreTools.js';
 import { captureCpuProfile } from '../perf-companion/capture/cpu-profile-capture.js';
 import { PerfCompanionError } from '../perf-companion/errors.js';
+import { formatBytes } from '../perf-companion/utils.js';
 
 // ─── Parameters ──────────────────────────────────────────────────────
 
@@ -196,10 +200,3 @@ export class CpuProfileCaptureTool extends BaseDeclarativeTool<
   }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}

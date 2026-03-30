@@ -32,6 +32,7 @@ import type {
 import { formatDiffForLLM } from '../analyze/three-snapshot-diff.js';
 import { formatRetainerChainsForLLM } from '../analyze/retainer-chain-extractor.js';
 import { formatCpuProfileForLLM } from '../analyze/cpu-profile-analyzer.js';
+import { formatBytes, formatMicroseconds, abbreviateScript } from '../utils.js';
 
 // ─── Heap Summary Analysis ───────────────────────────────────────────
 
@@ -403,22 +404,3 @@ function generateCpuSuggestions(profile: CpuProfileData): string[] {
   return suggestions;
 }
 
-// ─── Private: Formatting Helpers ─────────────────────────────────────
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}
-
-function formatMicroseconds(us: number): string {
-  if (us < 1000) return `${us.toFixed(0)} μs`;
-  if (us < 1_000_000) return `${(us / 1000).toFixed(1)} ms`;
-  return `${(us / 1_000_000).toFixed(2)} s`;
-}
-
-function abbreviateScript(url: string): string {
-  if (!url || url === '(native)') return url;
-  const lastSlash = url.lastIndexOf('/');
-  return lastSlash >= 0 ? url.slice(lastSlash + 1) : url;
-}

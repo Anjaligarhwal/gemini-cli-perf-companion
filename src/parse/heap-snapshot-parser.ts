@@ -59,6 +59,7 @@ import type {
   HeapSnapshotSummary,
 } from '../types.js';
 import { PerfCompanionError, PerfErrorCode } from '../errors.js';
+import { formatBytes } from '../utils.js';
 import { parseNodes, aggregateByConstructor } from './node-parser.js';
 import { parseEdges, buildReverseGraph } from './edge-parser.js';
 import type { RetainerEdge } from './edge-parser.js';
@@ -73,6 +74,14 @@ export interface ParseOptions {
   maxFileSizeBytes?: number;
   /** RSS threshold (bytes) at which a warning is emitted. @defaultValue 536_870_912 (512 MB) */
   memoryPressureThreshold?: number;
+  /**
+   * Callback invoked when RSS exceeds the memory pressure threshold.
+   *
+   * If omitted, no warning is emitted — library code never writes to
+   * stdout/stderr directly.  Callers (e.g., gemini-cli tool wrappers)
+   * can route this to their own logging infrastructure.
+   */
+  onWarning?: (message: string) => void;
 }
 
 /** Default maximum file size: 512 MB. */
@@ -173,7 +182,7 @@ export async function parseHeapSnapshotFull(
   }
 
   // ── Phase 1: Read and parse JSON ───────────────────────────────────
-  const rawJson = await readFileAsString(filePath, pressureThreshold);
+  const rawJson = await readFileAsString(filePath, pressureThreshold, options?.onWarning);
   const rawSnapshot = parseJson(rawJson);
 
   // Release the raw string for GC as soon as possible.
@@ -207,6 +216,7 @@ export async function parseHeapSnapshotFull(
 async function readFileAsString(
   filePath: string,
   pressureThreshold: number,
+  onWarning?: (message: string) => void,
 ): Promise<string> {
   const chunks: Buffer[] = [];
   const stream = createReadStream(filePath);
@@ -216,9 +226,9 @@ async function readFileAsString(
     chunks.push(chunk as Buffer);
 
     // Emit at most one pressure warning per parse to avoid log spam.
-    if (!warned && process.memoryUsage().rss > pressureThreshold) {
+    if (!warned && onWarning && process.memoryUsage().rss > pressureThreshold) {
       const rssMb = (process.memoryUsage().rss / 1_048_576).toFixed(0);
-      console.warn(
+      onWarning(
         `[perf-companion] Memory pressure: RSS=${rssMb} MB exceeds ` +
           `${(pressureThreshold / 1_048_576).toFixed(0)} MB threshold`,
       );
@@ -403,11 +413,3 @@ function buildTopConstructors(
   return groups.slice(0, topN);
 }
 
-// ─── Internal: Formatting ────────────────────────────────────────────
-
-/** Format a byte count for human consumption in error messages. */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}

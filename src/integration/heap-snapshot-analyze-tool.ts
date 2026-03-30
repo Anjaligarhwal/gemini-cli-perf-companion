@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// @ts-nocheck — This file targets gemini-cli's packages/core/src/tools/.
+// Imports resolve only when placed inside the gemini-cli monorepo.
+
 /**
  * BaseDeclarativeTool integration for heap snapshot analysis.
  *

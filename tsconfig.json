@@ -20,5 +20,13 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/__tests__"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/__tests__",
+    "src/integration/heap-snapshot-capture-tool.ts",
+    "src/integration/heap-snapshot-analyze-tool.ts",
+    "src/integration/cpu-profile-capture-tool.ts",
+    "src/integration/cpu-profile-analyze-tool.ts"
+  ]
 }

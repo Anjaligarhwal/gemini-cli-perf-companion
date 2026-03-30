@@ -45,6 +45,7 @@ import {
   formatRetainerChainsForLLM,
 } from './retainer-chain-extractor.js';
 import type { RetainerChainOptions } from './retainer-chain-extractor.js';
+import { formatBytes } from '../utils.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
 
@@ -359,9 +360,3 @@ function sumField(
   return total;
 }
 
-/** Format a byte count for human/LLM consumption. */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}

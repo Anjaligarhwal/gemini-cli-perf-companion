@@ -38,24 +38,21 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeFile, mkdir } from 'node:fs/promises';
 import * as http from 'node:http';
-import { fileURLToPath } from 'node:url';
 
 import { CdpClient } from './capture/cdp-client.js';
-import { parseHeapSnapshotFull } from './parse/heap-snapshot-parser.js';
 import { parseHeapSnapshotStreaming } from './parse/streaming-snapshot-parser.js';
 import { threeSnapshotDiff, formatDiffForLLM } from './analyze/three-snapshot-diff.js';
 import { extractRetainerChainsForLeaks } from './analyze/retainer-chain-extractor.js';
 import { diffResultToTrace, heapSummaryToTrace, mergeTraces, writeTrace } from './format/perfetto-formatter.js';
 import { analyzeLeakDetection } from './bridge/llm-analysis-bridge.js';
 import { validateConnectionTarget, validateCdpMethod, scanForSensitiveData } from './security/connection-validator.js';
+import { formatBytes } from './utils.js';
 
 // ─── Configuration ──────────────────────────────────────────────────
 
 const INSPECT_PORT = 9230;
 const INSPECT_HOST = '127.0.0.1';
 const OUTPUT_DIR = join(tmpdir(), 'gemini-perf-external-demo');
-const TRAFFIC_BURST_SIZE = 150;
-
 // ─── Leaky Server Script ────────────────────────────────────────────
 
 /**
@@ -233,11 +230,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}
 
 // ─── Main ───────────────────────────────────────────────────────────
 

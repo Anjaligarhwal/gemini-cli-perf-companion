@@ -30,6 +30,7 @@ import { threeSnapshotDiff, formatDiffForLLM } from './analyze/three-snapshot-di
 import { extractRetainerChainsForLeaks } from './analyze/retainer-chain-extractor.js';
 import { diffResultToTrace, heapSummaryToTrace, mergeTraces, writeTrace } from './format/perfetto-formatter.js';
 import { analyzeLeakDetection } from './bridge/llm-analysis-bridge.js';
+import { formatBytes } from './utils.js';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -251,11 +252,5 @@ async function main(): Promise<void> {
   console.log(`\nOutput directory: ${outputDir}`);
 }
 
-/** Format bytes for human-readable display. */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}
 
 main().catch(console.error);
