@@ -36,11 +36,8 @@ import * as http from 'node:http';
 
 import { CdpClient } from './capture/cdp-client.js';
 import { parseHeapSnapshotStreaming } from './parse/streaming-snapshot-parser.js';
-import { threeSnapshotDiff, formatDiffForLLM } from './analyze/three-snapshot-diff.js';
-import { extractRetainerChainsForLeaks } from './analyze/retainer-chain-extractor.js';
-import { classifyLeaks, formatClassificationForLLM } from './analyze/root-cause-classifier.js';
-import { heapSummaryToTrace, diffResultToTrace, mergeTraces, writeTrace } from './format/perfetto-formatter.js';
-import { analyzeHeapSummary, analyzeLeakDetection } from './bridge/llm-analysis-bridge.js';
+import { heapSummaryToTrace, writeTrace } from './format/perfetto-formatter.js';
+import { analyzeHeapSummary } from './bridge/llm-analysis-bridge.js';
 import { validateConnectionTarget, validateCdpMethod, scanForSensitiveData } from './security/connection-validator.js';
 import { formatBytes } from './utils.js';
 

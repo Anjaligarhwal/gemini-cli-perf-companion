@@ -225,6 +225,85 @@ The streaming parser handled an 89 MB production heap snapshot in 1.7 seconds �
  tool-definitions.test.ts           21 tests — Schema validation, cross-tool consistency
 ```
 
+## Integration Path into gemini-cli
+
+This prototype is standalone by design — all analysis engines, parsers, and formatters work independently. During GSoC, these modules integrate into `gemini-cli`'s monorepo at exact locations:
+
+### File Placement Map
+
+```
+gemini-cli/packages/core/src/
+├── tools/
+│   ├── heap-snapshot-capture.ts    ← src/integration/heap-snapshot-capture-tool.ts
+│   ├── heap-snapshot-analyze.ts    ← src/integration/heap-snapshot-analyze-tool.ts
+│   ├── cpu-profile-capture.ts      ← src/integration/cpu-profile-capture-tool.ts
+│   ├── cpu-profile-analyze.ts      ← src/integration/cpu-profile-analyze-tool.ts
+│   └── definitions/
+│       └── coreTools.ts            ← add 4 tool definitions from tool-definitions.ts
+│
+├── perf-companion/                 ← NEW directory (analysis engine)
+│   ├── parse/
+│   │   ├── streaming-snapshot-parser.ts
+│   │   ├── node-parser.ts
+│   │   └── edge-parser.ts
+│   ├── analyze/
+│   │   ├── three-snapshot-diff.ts
+│   │   ├── noise-filter.ts
+│   │   ├── retainer-chain-extractor.ts
+│   │   └── root-cause-classifier.ts
+│   ├── capture/
+│   │   ├── cdp-client.ts
+│   │   └── heap-snapshot-capture.ts
+│   ├── format/
+│   │   └── perfetto-formatter.ts
+│   ├── bridge/
+│   │   └── llm-analysis-bridge.ts
+│   ├── security/
+│   │   └── connection-validator.ts
+│   ├── types.ts
+│   └── errors.ts
+│
+└── config/
+    └── config.ts                   ← add maybeRegister() calls (4 lines)
+```
+
+### Registration (4 lines in `config.ts`)
+
+```typescript
+// In packages/core/src/config/config.ts, alongside existing tool registrations:
+maybeRegister(HeapSnapshotCaptureTool, () =>
+  registry.registerTool(new HeapSnapshotCaptureTool(this, this.messageBus)),
+);
+maybeRegister(HeapSnapshotAnalyzeTool, () =>
+  registry.registerTool(new HeapSnapshotAnalyzeTool(this, this.messageBus)),
+);
+maybeRegister(CpuProfileCaptureTool, () =>
+  registry.registerTool(new CpuProfileCaptureTool(this, this.messageBus)),
+);
+maybeRegister(CpuProfileAnalyzeTool, () =>
+  registry.registerTool(new CpuProfileAnalyzeTool(this, this.messageBus)),
+);
+```
+
+### Tool Definition Registration (in `coreTools.ts`)
+
+```typescript
+// In packages/core/src/tools/definitions/coreTools.ts:
+export { HEAP_SNAPSHOT_CAPTURE_DEFINITION } from '../heap-snapshot-capture.js';
+export { HEAP_SNAPSHOT_ANALYZE_DEFINITION } from '../heap-snapshot-analyze.js';
+export { CPU_PROFILE_CAPTURE_DEFINITION } from '../cpu-profile-capture.js';
+export { CPU_PROFILE_ANALYZE_DEFINITION } from '../cpu-profile-analyze.js';
+```
+
+### Why Standalone First
+
+- **Zero runtime dependencies** — nothing to add to gemini-cli's `package.json`
+- **No import conflicts** — the `perf-companion/` directory is self-contained
+- **Testable independently** — 301 tests run without gemini-cli checkout
+- **Integration is mechanical** — copy files, add 4 `maybeRegister()` calls, update imports
+
+The integration tools (`src/integration/`) already extend `BaseDeclarativeTool` and follow the exact pattern of `ReadFileTool` and `WebFetchTool`. The `@ts-nocheck` annotations exist because those imports (`../config/config.js`, `../confirmation-bus/message-bus.js`) resolve only when placed inside the gemini-cli monorepo.
+
 ## Upstream Contributions
 
 - **PR [#23587](https://github.com/google-gemini/gemini-cli/pull/23587)** — Bug fix: `ProceedAlwaysAndSave` incorrectly mapped to `REJECT` instead of `AUTO_ACCEPT` in telemetry, plus 8 unit tests for `getDecisionFromOutcome` *(status/need-issue)*

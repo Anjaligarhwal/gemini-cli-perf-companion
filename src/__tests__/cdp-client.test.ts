@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
+import type { Duplex } from 'node:stream';
 import { CdpClient } from '../capture/cdp-client.js';
 import { PerfCompanionError } from '../errors.js';
 
@@ -21,9 +22,9 @@ import { PerfCompanionError } from '../errors.js';
  */
 class MockInspectorServer {
   private server: http.Server;
-  private connections: import('node:net').Socket[] = [];
+  private connections: Duplex[] = [];
   readonly port: number;
-  private _onMessage?: (msg: Record<string, unknown>, socket: import('node:net').Socket) => void;
+  private _onMessage?: (msg: Record<string, unknown>, socket: Duplex) => void;
 
   constructor(port: number = 0) {
     this.port = port;
@@ -32,7 +33,7 @@ class MockInspectorServer {
 
   /** Set a handler for incoming CDP messages. */
   onMessage(
-    handler: (msg: Record<string, unknown>, socket: import('node:net').Socket) => void,
+    handler: (msg: Record<string, unknown>, socket: Duplex) => void,
   ): void {
     this._onMessage = handler;
   }
@@ -103,7 +104,7 @@ class MockInspectorServer {
 
   /** Send a CDP response to a specific socket. */
   sendResponse(
-    socket: import('node:net').Socket,
+    socket: Duplex,
     id: number,
     result: Record<string, unknown>,
   ): void {
@@ -122,7 +123,7 @@ class MockInspectorServer {
   }
 
   /** Send an unmasked server text frame. */
-  private sendFrame(socket: import('node:net').Socket, payload: string): void {
+  private sendFrame(socket: Duplex, payload: string): void {
     if (socket.destroyed) return;
     const data = Buffer.from(payload, 'utf-8');
     const length = data.length;
@@ -149,7 +150,7 @@ class MockInspectorServer {
   }
 
   /** Parse a masked client frame and dispatch to the message handler. */
-  private processData(data: Buffer, socket: import('node:net').Socket): void {
+  private processData(data: Buffer, socket: Duplex): void {
     if (data.length < 6) return; // Minimum: 2 header + 4 mask
 
     const payloadLength = data[1] & 0x7f;
