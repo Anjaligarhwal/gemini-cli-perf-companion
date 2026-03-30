@@ -4,7 +4,7 @@
 
 A production-grade analysis engine for terminal-integrated performance and memory investigation. Captures V8 heap snapshots and CPU profiles, runs the 3-snapshot leak detection algorithm, extracts retainer chains, and formats results for both LLM reasoning and Perfetto visualization.
 
-**185 tests** across 12 test files — all passing.
+**301 tests** across 15 test suites — all passing.
 
 ## Architecture
 
@@ -15,7 +15,9 @@ src/
 ├── validation.ts                      # Input validation utilities
 │
 ├── parse/                             # V8 format decoders
-│   ├── heap-snapshot-parser.ts        # Two-phase parser: summary + full (512MB guard, RSS monitoring)
+│   ├── heap-snapshot-parser.ts        # Two-phase batch parser (512MB guard, RSS monitoring)
+│   ├── streaming-snapshot-parser.ts   # Streaming parser: ~1.3x memory vs ~3x for batch
+│   │                                  #   Direct digit accumulation, chunk-boundary safe
 │   ├── node-parser.ts                 # Flat integer array → HeapNode[] via snapshot.meta
 │   └── edge-parser.ts                 # Flat integer array → HeapEdge[] with fromNode resolution
 │
@@ -24,13 +26,22 @@ src/
 │   ├── noise-filter.ts                # 5-layer filter: monotonic growth, min-count, constructor
 │   │                                  #   exclusion, growth-rate threshold, size floor
 │   ├── retainer-chain-extractor.ts    # BFS through reverse heap graph → GC root paths
+│   ├── root-cause-classifier.ts       # Automatic leak classification into 5 categories:
+│   │                                  #   event listener, unbounded cache, closure capture,
+│   │                                  #   global reference, timer/interval
 │   └── cpu-profile-analyzer.ts        # Hot function ranking, GC pressure, category breakdowns
+│
+├── security/                          # Security boundary
+│   └── connection-validator.ts        # Loopback-only host enforcement, privileged port
+│                                      #   rejection, CDP method allowlist, output path
+│                                      #   traversal prevention, sensitive data scanner
 │
 ├── capture/                           # Data collection
 │   ├── heap-snapshot-capture.ts       # Self (node:inspector) + remote (CDP) heap capture
 │   ├── cpu-profile-capture.ts         # V8 Profiler.start/stop with duration control
 │   └── cdp-client.ts                  # Zero-dependency CDP WebSocket client (RFC 6455)
 │                                      #   Uses only node:http + node:crypto
+│                                      #   Node.js 18-22+ inspector discovery
 │
 ├── format/                            # Output formatters
 │   └── perfetto-formatter.ts          # Chrome Trace Event JSON for ui.perfetto.dev
@@ -47,20 +58,26 @@ src/
 │   ├── cpu-profile-capture-tool.ts    # Kind.Execute
 │   └── cpu-profile-analyze-tool.ts    # Kind.Read
 │
-├── demo.ts                            # End-to-end demo with synthetic leak
+├── demo.ts                            # End-to-end demo with synthetic leak (self-capture)
+├── demo-external.ts                   # External process profiling demo via CDP
+│                                      #   Spawns leaky server with --inspect, captures
+│                                      #   remotely, runs full pipeline
 │
-└── __tests__/                         # 185 tests across 12 files
+└── __tests__/                         # 301 tests across 15 suites
     ├── three-snapshot-diff.test.ts    # Diff algorithm + LLM formatting
     ├── perfetto-formatter.test.ts     # Trace generation + retainer chain events
     ├── noise-filter.test.ts           # All 5 filter layers
     ├── retainer-chain-extractor.test.ts  # BFS, cycles, partial chains, formatting
     ├── cpu-profile-analyzer.test.ts   # Hot functions, GC pressure, categories
     ├── heap-snapshot-parser.test.ts   # Full + summary parse, error handling
+    ├── streaming-snapshot-parser.test.ts # Batch/stream parity, chunk boundaries, escapes
     ├── node-parser.test.ts            # Flat array decoding, edge cases
     ├── edge-parser.test.ts            # Edge resolution, type mapping
     ├── cdp-client.test.ts             # Mock WebSocket server, CDP protocol
     ├── llm-analysis-bridge.test.ts    # All 3 analysis modes + merge
-    ├── integration-pipeline.test.ts   # End-to-end: parse → diff → chains → format
+    ├── connection-validator.test.ts   # Loopback, ports, CDP allowlist, path traversal
+    ├── root-cause-classifier.test.ts  # 5 categories, confidence, LLM formatting
+    ├── integration-pipeline.test.ts   # 21 end-to-end: parse → diff → chains → format
     └── tool-definitions.test.ts       # Schema validation, cross-tool consistency
 ```
 
@@ -84,6 +101,30 @@ Raw heap diffs produce hundreds of false positives. The filter chain eliminates 
 
 BFS from leaked objects through the reverse heap graph to find the retention path to GC roots. Answers the question: "**why** can't this object be garbage collected?" — not just "what leaked."
 
+### Streaming Heap Snapshot Parser (`src/parse/streaming-snapshot-parser.ts`)
+
+Processes `.heapsnapshot` files incrementally via `AsyncIterable<Buffer>`, reducing peak memory from ~3× file size (batch) to ~1.3× (streaming). Uses direct digit accumulation (`value = value * 10 + (ch - 0x30)`) for the flat integer arrays instead of string intermediaries — ~10× faster than `parseFloat` for the 35M+ integers in large snapshots. Full JSON escape handling for the string table, cooperative cancellation via `AbortSignal`, and progress callbacks.
+
+### Root Cause Classification Engine (`src/analyze/root-cause-classifier.ts`)
+
+Classifies each leak into one of 5 categories based on retainer chain pattern matching:
+- **Event Listener** — `_events` / `EventEmitter` in the chain → fix: `removeListener()`
+- **Unbounded Cache** — `Map` / `Set` with no eviction → fix: TTL/LRU policy
+- **Closure Capture** — V8 closure type with context edges → fix: null captured refs
+- **Global Reference** — reachable from `global` / module scope → fix: instance lifecycle
+- **Timer/Interval** — `Timeout` / `Timer` never cleared → fix: `clearInterval()`
+
+Each classification includes a confidence score, explanation, and suggested fix pattern for the LLM agent.
+
+### Security Model (`src/security/connection-validator.ts`)
+
+Defense-in-depth boundary for CDP remote profiling:
+- **Loopback enforcement** — Only `127.0.0.1`, `::1`, `localhost` (raw string check, no DNS)
+- **Port range** — Rejects privileged ports 1–1023
+- **CDP method allowlist** — Only HeapProfiler, Profiler, NodeTracing; blocks `Runtime.evaluate`
+- **Output path validation** — Prevents `../` traversal
+- **Sensitive data scanner** — Detects API keys, JWTs, AWS keys, connection strings in snapshot string tables
+
 ### BaseDeclarativeTool Integration (`src/integration/`)
 
 4 tools following the exact pattern from `gemini-cli`'s `ReadFileTool` and `WebFetchTool`:
@@ -106,35 +147,41 @@ maybeRegister(HeapSnapshotCaptureTool, () =>
 
 ```bash
 npm install
-npx vitest run          # Run all 185 tests
-npm run build           # TypeScript compilation
-npx tsx src/demo.ts     # End-to-end leak detection demo
+npx vitest run                # Run all 301 tests
+npm run build                 # TypeScript compilation
+npx tsx src/demo.ts           # Self-capture leak detection demo
+npx tsx src/demo-external.ts  # External process profiling demo (CDP)
 ```
 
-The demo simulates a server-side memory leak (unbounded `SessionStore`), captures 3 heap snapshots, runs the diff + retainer chain pipeline, and generates a Perfetto trace. Output includes:
-- **Top leaking constructor**: `RequestContext` (detected by named constructor growth)
-- **Retainer chain**: `RequestContext ← Map ← sessions ← SessionStore ← module scope`
-- **Perfetto trace**: Open the generated `demo-trace.json` at [ui.perfetto.dev](https://ui.perfetto.dev/)
+### Self-Capture Demo (`demo.ts`)
+Simulates a server-side memory leak (unbounded `SessionStore`), captures 3 heap snapshots from the current process, runs the diff + retainer chain pipeline, and generates a Perfetto trace.
+
+### External Process Demo (`demo-external.ts`)
+Spawns a leaky HTTP server as a child process with `--inspect=9230`, connects via CDP WebSocket, captures 3 snapshots remotely, parses via the streaming parser, runs leak detection with root cause classification, and generates a Perfetto trace. Demonstrates the core workflow: profiling a process the user is not running inside of.
 
 ## Test Coverage
 
 ```
- Test Files  12 passed (12)
-      Tests  185 passed (185)
-   Duration  567ms
+ Test Files  15 passed (15)
+      Tests  301 passed (301)
+   Duration  ~1.1s
 
- cdp-client.test.ts              11 tests  — WebSocket connect, CDP send/receive, events, disconnect
- cpu-profile-analyzer.test.ts    20 tests  — Hot functions, GC pressure, categories, edge cases
- edge-parser.test.ts             11 tests  — Edge resolution, type mapping, boundary conditions
- heap-snapshot-parser.test.ts    13 tests  — Full/summary parse, file guards, error handling
- integration-pipeline.test.ts     3 tests  — End-to-end parse → diff → chains → Perfetto
- llm-analysis-bridge.test.ts     22 tests  — Heap/leak/CPU analysis + merge results
- node-parser.test.ts             16 tests  — Flat array decoding, type resolution, detachedness
- noise-filter.test.ts            13 tests  — All 5 filter layers, combinations, edge cases
- perfetto-formatter.test.ts      20 tests  — Trace events, retainer chains, leak markers
- retainer-chain-extractor.test.ts 19 tests — BFS, cycles, partial chains, multi-constructor
- three-snapshot-diff.test.ts     16 tests  — Diff algorithm, sorting, LLM output
- tool-definitions.test.ts        21 tests  — Schema validation, cross-tool consistency
+ cdp-client.test.ts                 11 tests — WebSocket connect, CDP send/receive, events
+ connection-validator.test.ts       57 tests — Loopback, ports, CDP allowlist, path traversal, PII scan
+ cpu-profile-analyzer.test.ts       20 tests — Hot functions, GC pressure, categories
+ edge-parser.test.ts                11 tests — Edge resolution, type mapping, boundary conditions
+ heap-snapshot-parser.test.ts       13 tests — Full/summary parse, file guards, error handling
+ streaming-snapshot-parser.test.ts  20 tests — Batch/stream parity, chunk boundaries, escapes, abort
+ integration-pipeline.test.ts       21 tests — End-to-end: multi-constructor, closure, detached DOM,
+                                               streaming, security, Perfetto, LLM output constraints
+ llm-analysis-bridge.test.ts        22 tests — Heap/leak/CPU analysis + merge results
+ node-parser.test.ts                16 tests — Flat array decoding, type resolution, detachedness
+ noise-filter.test.ts               13 tests — All 5 filter layers, combinations, edge cases
+ perfetto-formatter.test.ts         20 tests — Trace events, retainer chains, leak markers
+ retainer-chain-extractor.test.ts   19 tests — BFS, cycles, partial chains, multi-constructor
+ root-cause-classifier.test.ts      21 tests — 5 categories, confidence scoring, LLM formatting
+ three-snapshot-diff.test.ts        16 tests — Diff algorithm, sorting, LLM output
+ tool-definitions.test.ts           21 tests — Schema validation, cross-tool consistency
 ```
 
 ## Upstream Contributions
