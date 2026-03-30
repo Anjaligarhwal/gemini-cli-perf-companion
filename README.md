@@ -23,8 +23,8 @@ src/
 │
 ├── analyze/                           # Analysis engines
 │   ├── three-snapshot-diff.ts         # A→B→C leak detection with constructor-level diffing
-│   ├── noise-filter.ts                # 5-layer filter: monotonic growth, min-count, constructor
-│   │                                  #   exclusion, growth-rate threshold, size floor
+│   ├── noise-filter.ts                # Noise reduction: constructor exclusion, size floor,
+│   │                                  #   single-instance filter, min-count, negative growth
 │   ├── retainer-chain-extractor.ts    # BFS through reverse heap graph → GC root paths
 │   ├── root-cause-classifier.ts       # Automatic leak classification into 5 categories:
 │   │                                  #   event listener, unbounded cache, closure capture,
@@ -219,7 +219,7 @@ The streaming parser handled an 89 MB production heap snapshot in 1.7 seconds �
                                                streaming, security, Perfetto, LLM output constraints
  llm-analysis-bridge.test.ts        22 tests — Heap/leak/CPU analysis + merge results
  node-parser.test.ts                16 tests — Flat array decoding, type resolution, detachedness
- noise-filter.test.ts               13 tests — All 5 filter layers, combinations, edge cases
+ noise-filter.test.ts               13 tests — All filter conditions, combinations, edge cases
  perfetto-formatter.test.ts         20 tests — Trace events, retainer chains, leak markers
  retainer-chain-extractor.test.ts   19 tests — BFS, cycles, partial chains, multi-constructor
  root-cause-classifier.test.ts      21 tests — 5 categories, confidence scoring, LLM formatting
