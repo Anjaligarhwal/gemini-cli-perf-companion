@@ -734,8 +734,7 @@ class SnapshotStreamProcessor {
    *   - Simple escapes: `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`
    *   - Unicode escapes: `\uXXXX`
    *   - Surrogate pairs: high surrogate followed by low surrogate are
-   *     emitted as individual UTF-16 code units, which JavaScript
-   *     natively represents as the combined code point.
+   *     combined into the full code point via String.fromCodePoint().
    */
   private processStringsChar(ch: number, char: string): void {
     // ── Unicode escape continuation ──────────────────────────────────
@@ -745,7 +744,7 @@ class SnapshotStreamProcessor {
       if (this.unicodeRemaining === 0) {
         const codePoint = parseInt(this.unicodeBuffer, 16);
         if (!isNaN(codePoint)) {
-          this.stringBuffer += String.fromCharCode(codePoint);
+          this.stringBuffer += String.fromCodePoint(codePoint);
         }
         this.unicodeBuffer = '';
       }
